@@ -132,10 +132,14 @@ class ProductController extends Controller
         $disk = config('filesystems.default');
 
         if ($disk === 'cloudinary') {
-            $result = cloudinary()->upload($file->getRealPath(), [
-                'folder' => 'ranch/products',
-            ]);
-            return $result->getSecurePath();
+            // Generate a unique public_id path for Cloudinary
+            $filename = 'ranch/products/' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+
+            // Write the file to Cloudinary via the Storage adapter
+            Storage::disk('cloudinary')->put($filename, file_get_contents($file->getRealPath()));
+
+            // Get the secure URL back from Cloudinary
+            return Storage::disk('cloudinary')->url($filename);
         }
 
         $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
@@ -152,10 +156,11 @@ class ProductController extends Controller
 
         if ($disk === 'cloudinary') {
             try {
-                $segments = explode('/', parse_url($imagePath, PHP_URL_PATH));
-                $filename = pathinfo(end($segments), PATHINFO_FILENAME);
-                $publicId = 'ranch/products/' . $filename;
-                cloudinary()->destroy($publicId);
+                // Extract the path portion after /image/upload/ for the public_id
+                // Cloudinary URL format: https://res.cloudinary.com/cloud/image/upload/ranch/products/filename.jpg
+                if (preg_match('/\/image\/upload\/(.+)$/', $imagePath, $matches)) {
+                    Storage::disk('cloudinary')->delete($matches[1]);
+                }
             } catch (\Exception $e) {
                 \Log::warning('Cloudinary delete failed: ' . $e->getMessage());
             }
