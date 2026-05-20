@@ -132,14 +132,29 @@ class ProductController extends Controller
         $disk = config('filesystems.default');
 
         if ($disk === 'cloudinary') {
-            // Generate a unique public_id path for Cloudinary
-            $filename = 'ranch/products/' . time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            // Parse CLOUDINARY_URL manually to extract credentials
+            // Format: cloudinary://API_KEY:API_SECRET@CLOUD_NAME
+            $url = env('CLOUDINARY_URL');
+            $parsed = parse_url($url);
+            $cloudName  = $parsed['host'];
+            $apiKey     = $parsed['user'];
+            $apiSecret  = $parsed['pass'];
 
-            // Write the file to Cloudinary via the Storage adapter
-            Storage::disk('cloudinary')->put($filename, file_get_contents($file->getRealPath()));
+            // Use the Cloudinary SDK directly with explicit credentials
+            $cloudinary = new \Cloudinary\Cloudinary([
+                'cloud' => [
+                    'cloud_name' => $cloudName,
+                    'api_key'    => $apiKey,
+                    'api_secret' => $apiSecret,
+                ],
+                'url' => ['secure' => true],
+            ]);
 
-            // Get the secure URL back from Cloudinary
-            return Storage::disk('cloudinary')->url($filename);
+            $result = $cloudinary->uploadApi()->upload($file->getRealPath(), [
+                'folder' => 'ranch/products',
+            ]);
+
+            return $result['secure_url'];
         }
 
         $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
@@ -156,10 +171,22 @@ class ProductController extends Controller
 
         if ($disk === 'cloudinary') {
             try {
-                // Extract the path portion after /image/upload/ for the public_id
-                // Cloudinary URL format: https://res.cloudinary.com/cloud/image/upload/ranch/products/filename.jpg
-                if (preg_match('/\/image\/upload\/(.+)$/', $imagePath, $matches)) {
-                    Storage::disk('cloudinary')->delete($matches[1]);
+                $url = env('CLOUDINARY_URL');
+                $parsed = parse_url($url);
+                $cloudinary = new \Cloudinary\Cloudinary([
+                    'cloud' => [
+                        'cloud_name' => $parsed['host'],
+                        'api_key'    => $parsed['user'],
+                        'api_secret' => $parsed['pass'],
+                    ],
+                    'url' => ['secure' => true],
+                ]);
+
+                // Extract public_id from the secure URL
+                // e.g. https://res.cloudinary.com/cloud/image/upload/v123/ranch/products/file.jpg
+                // public_id = ranch/products/file (no extension)
+                if (preg_match('/\/upload\/(?:v\d+\/)?(.+)\.[a-z]+$/i', $imagePath, $matches)) {
+                    $cloudinary->uploadApi()->destroy($matches[1]);
                 }
             } catch (\Exception $e) {
                 \Log::warning('Cloudinary delete failed: ' . $e->getMessage());
